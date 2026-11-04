@@ -1,0 +1,7 @@
+services:
+  lightcraft-web:
+    image: ghcr.io/mikapst/lightcraft-web:latest
+    container_name: lightcraft-web
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
