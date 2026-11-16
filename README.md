@@ -9,15 +9,21 @@
   <a href="https://github.com/storytold/lightcraft">LightCraft</a>,
   bringing its WebAssembly-based non-destructive photo editor to a self-hosted web interface.
   <br>
-  Automated weekly builds and image publication to GitHub Container Registry (GHCR).
+  Automated builds from official upstream releases and image publication to GitHub Container Registry (GHCR).
 </p>
 
 <p align="center">
   <a href="https://github.com/MikaPST/lightcraft-web/actions/workflows/publish-image.yml">
     <img src="https://github.com/MikaPST/lightcraft-web/actions/workflows/publish-image.yml/badge.svg" alt="Build and publish LightCraft Web">
   </a>
-  <a href="https://ghcr.io/mikapst/lightcraft-web">
+  <a href="https://github.com/MikaPST/lightcraft-web/releases/latest">
+    <img src="https://img.shields.io/github/v/release/MikaPST/lightcraft-web?label=Release&logo=github&color=blue" alt="Latest Release">
+  </a>
+  <a href="https://github.com/MikaPST/lightcraft-web/pkgs/container/lightcraft-web">
     <img src="https://ghcr-badge.egpl.dev/mikapst/lightcraft-web/latest_tag?trim=major&label=GHCR" alt="GHCR image tag">
+  </a>
+  <a href="docker-compose.yml">
+    <img src="https://img.shields.io/badge/Docker%20Compose-ready-2496ED?logo=docker&logoColor=white" alt="Docker Compose configuration">
   </a>
 </p>
 
@@ -29,10 +35,10 @@ The upstream LightCraft project provides a WebAssembly build that can be served 
 
 The goals are to:
 
-- Build the web app from the current `main` branch of [storytold/lightcraft](https://github.com/storytold/lightcraft).
+- Build the web app from official release tags of [storytold/lightcraft](https://github.com/storytold/lightcraft).
 - Include the shared font assets from [storytold/craft-fonts](https://github.com/storytold/craft-fonts).
-- Rebuild the image automatically each week and publish it to GHCR.
-- Provide a simple image that can later be offered through Unraid Community Applications.
+- Check for new official releases daily and publish successful builds to GHCR.
+- Provide a Docker image compatible with the existing Unraid Community Applications template.
 - Keep this packaging project separate from the upstream LightCraft source code.
 
 This is an independent community packaging project. It is **not an official LightCraft release** and is not affiliated with or endorsed by the LightCraft or ArtCraft maintainers.
@@ -181,18 +187,19 @@ GitHub Actions builds the LightCraft web application and publishes the container
 
 | Trigger | Behaviour |
 |---|---|
-| Daily schedule | Checks out the current upstream `main` branch, builds the WebAssembly app and publishes a new image when the build succeeds |
-| Manual workflow dispatch | Allows a build to be started manually from the Actions tab |
-| Changes to packaging files | Runs the workflow when `docker-compose.yml`, `README.md` or the workflow file changes on `main` |
+| Daily schedule (03:17 UTC) | Checks the latest official upstream release and builds it only if it has not already been published |
+| Manual workflow dispatch | Builds the latest official release or a specified `upstream_tag`; `force_rebuild` allows rebuilding a published release |
+| Changes to packaging files | Rebuilds the current official release when the workflow, README, Dockerfile, NGINX, `.dockerignore` or Compose files change on `main` |
 
 ### Published tags
 
-- `latest` — the latest successful build.
+- `latest` — the latest successfully published image (mutable).
+- `<upstream-version>` — the exact official upstream release tag.
 - `upstream-<commit>` — identifies the exact LightCraft source commit used for the build.
 
 The image is published for `linux/amd64` and `linux/arm64`. The container serves static web assets through NGINX; the web files are architecture-independent.
 
-A scheduled rebuild does not guarantee that upstream changes are compatible or stable. If a build fails, the previous published image remains available.
+An upstream release can introduce build or browser compatibility changes. If a build fails before publication, the previously published image remains available.
 
 > **First-time GHCR setup:** after the first successful publication, check the package's visibility in GitHub Packages. Set `lightcraft-web` to **Public** if you want users to pull the image without authenticating to GHCR.
 
