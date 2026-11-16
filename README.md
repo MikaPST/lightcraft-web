@@ -57,7 +57,7 @@ The published image is:
 ghcr.io/mikapst/lightcraft-web:latest
 ```
 
-### Quick start with Docker Compose
+### Option 1 — Docker Compose (recommended)
 
 A `docker-compose.yml` file is provided at the repository root:
 
@@ -85,17 +85,7 @@ http://YOUR_SERVER_IP:8080
 
 Replace `YOUR_SERVER_IP` with the IP address or hostname of your server. On the same computer, use `http://localhost:8080`.
 
-### Run directly with Docker
-
-```bash
-docker run -d \
-  --name lightcraft-web \
-  --restart unless-stopped \
-  -p 8080:8080 \
-  ghcr.io/mikapst/lightcraft-web:latest
-```
-
-### Useful commands
+#### Useful Compose commands
 
 ```bash
 # View logs
@@ -111,7 +101,18 @@ docker compose down
 
 No `.env` file or persistent Docker volume is required for the default configuration. The host port is `8080`; to use a different host port, change the left-hand side of the port mapping, for example `8081:8080`.
 
-### Reverse proxy and browser requirements
+
+### Option 2 — Run directly with Docker
+
+```bash
+docker run -d \
+  --name lightcraft-web \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  ghcr.io/mikapst/lightcraft-web:latest
+```
+
+### Network access and reverse proxies
 
 The version-controlled NGINX configuration:
 
@@ -124,6 +125,55 @@ The upstream documentation describes the COOP, COEP and CORP response headers as
 LightCraft requires an HTTP(S) origin; it cannot be opened directly from `file://`. `localhost` and `127.0.0.1` are treated as secure origins by browsers. If you expose the application outside your local network, use HTTPS through a reverse proxy such as Traefik and avoid exposing plain HTTP directly to the public Internet.
 
 The web application uses WebGL2. Browser and GPU compatibility, available memory and the size/format of imported photos affect performance.
+
+## Repository structure
+
+This repository maintains the Docker packaging independently of the official LightCraft source. The upstream application and font assets are retrieved only during automated builds.
+
+```text
+lightcraft-web/
+├── .github/
+│   └── workflows/
+│       └── publish-image.yml
+├── .dockerignore
+├── Dockerfile
+├── nginx.conf
+├── docker-compose.yml
+└── README.md
+```
+
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Defines the unprivileged NGINX runtime image, metadata and Docker health check. |
+| `nginx.conf` | Configures WebAssembly MIME types, precompressed gzip delivery, revalidation, security headers and `/healthz`. |
+| `.dockerignore` | Restricts the generated Docker context to application assets, legal notices and server configuration. |
+| `docker-compose.yml` | Provides the ready-to-use Docker Compose deployment on port `8080`. |
+| `.github/workflows/publish-image.yml` | Checks upstream releases, builds WebAssembly, publishes multiarchitecture GHCR images and creates GitHub Releases. |
+| `README.md` | Documents LightCraft, its independent packaging and deployment. |
+
+### Docker build architecture
+
+The Docker image combines the **official LightCraft WebAssembly build** with the configuration versioned in this repository. Unlike PhotoCraft, LightCraft uses `cargo xtask web` rather than a Trunk-based Docker compilation.
+
+The workflow follows these steps:
+
+1. GitHub Actions resolves the latest official LightCraft release or the explicitly requested release tag.
+2. The selected official source is checked out into `upstream/`; shared fonts are checked out separately into `craft-fonts/`.
+3. Rust and `wasm32-unknown-unknown` are installed, together with the `wasm-bindgen-cli` version from upstream `Cargo.lock`.
+4. `cargo xtask web` compiles the application with `CRAFT_FONTS_DIR` set to the shared fonts checkout.
+5. The generated site is validated in `upstream/target/web-site/`, including `index.html`, workers and WebAssembly files.
+6. The site, legal notices and **version-controlled** `Dockerfile`, `nginx.conf` and `.dockerignore` are copied into a temporary Docker build context.
+7. Docker Buildx publishes the static NGINX image to GHCR for `linux/amd64` and `linux/arm64`.
+8. A matching GitHub Release is created or updated **only after** the image push succeeds.
+
+The compiled browser application is architecture-independent: it is built once on the runner, then packaged into runtime images for both supported architectures.
+
+The official build generates `.gz` and `.br` copies of its static assets. NGINX serves the precompressed gzip files; the standard NGINX Alpine image does not serve Brotli without an additional module. LightCraft uses **stable asset filenames**, so its NGINX configuration requests cache revalidation rather than `immutable` caching.
+
+The container provides HTTP on port `8080`, a `/healthz` endpoint, correct WebAssembly MIME types and non-root execution. The user's photo library remains in the browser's OPFS/IndexedDB storage: **no Docker volume or server-side photo database** is created.
+
+> [!NOTE]
+> Upstream changes to `cargo xtask web`, `Cargo.lock`, fonts or generated output paths may require packaging updates. The GitHub Actions build is the authoritative compatibility check.
 
 ## Automated builds
 
@@ -146,55 +196,46 @@ A scheduled rebuild does not guarantee that upstream changes are compatible or s
 
 > **First-time GHCR setup:** after the first successful publication, check the package's visibility in GitHub Packages. Set `lightcraft-web` to **Public** if you want users to pull the image without authenticating to GHCR.
 
-## Build pipeline
+### GitHub Releases
 
-The workflow:
+After a successful Docker build and GHCR push, the workflow creates or updates a [GitHub Release](https://github.com/MikaPST/lightcraft-web/releases) matching the selected official LightCraft release tag.
 
-1. Checks out this repository into `packaging/` and validates all five packaging files, including `.dockerignore`.
-2. Checks out LightCraft and the shared `craft-fonts` repository.
-3. Installs the Rust WebAssembly target and the exact `wasm-bindgen-cli` version required by the upstream `Cargo.lock`.
-4. Runs `cargo xtask web` with `CRAFT_FONTS_DIR` pointing to the checked-out font repository.
-5. Checks the generated files in `upstream/target/web-site`.
-6. Packages the generated static site into an NGINX image and publishes it to GHCR.
+Each release documents:
 
-The upstream release build creates precompressed gzip and Brotli copies. This image configures NGINX's `gzip_static` support to serve the precompressed gzip files. The standard `nginx:alpine` image used here does not include a Brotli module, so the `.br` files are retained in the site but are not served as Brotli responses by this configuration.
+- The official upstream release name, notes and source link.
+- The upstream tag and source commit.
+- The shared `craft-fonts` commit used for the build.
+- Published image tags: `latest`, `<upstream-version>` and `upstream-<commit>`.
+- Supported platforms: `linux/amd64` and `linux/arm64`.
+- The published image digest, when available.
+- The fact that this image is independently maintained community packaging.
 
-The `Dockerfile`, `nginx.conf` and `.dockerignore` files are maintained independently in this repository. The workflow copies these version-controlled files into a temporary Docker build context alongside the official compiled web application.
+Scheduled and ordinary manual runs skip versions already published here. To rebuild an existing release, use **Actions → Build and publish LightCraft Web → Run workflow** with `force_rebuild` enabled. A new workflow run on `main` is required to pick up recently committed packaging files; **Re-run jobs** may use an earlier commit.
 
-The repository is primarily intended as an automated image-build and publication pipeline; the normal way to consume it is to pull the published image.
-
-### Packaging files
-
-| File | Purpose |
-|---|---|
-| `Dockerfile` | Non-root NGINX runtime with OCI metadata and health check |
-| `nginx.conf` | WebAssembly MIME type, gzip-static delivery and safe revalidation |
-| `.dockerignore` | Restricts the Docker context to the generated site, legal notices and server files |
-| `docker-compose.yml` | Minimal deployment on port 8080 |
-| `.github/workflows/publish-image.yml` | Release-aware multi-architecture CI and GHCR publishing |
-
-**Note:** Do not use **Re-run jobs** to pick up newly committed packaging files; start a new workflow run on `main`.
+> [!IMPORTANT]
+> GitHub Releases are created **only after** successful GHCR publication. `latest` is mutable, and forced rebuilds may also update versioned tags. Pin an image digest for exact reproducibility.
 
 ## Unraid Community Applications
 
-This image is intended to be usable on Unraid.
+LightCraft Web can be installed through the maintainer's separate Unraid Community Applications template repository.
 
-An Unraid Community Applications template will be added after the image build and runtime configuration have been tested and validated.
-
-In the meantime, LightCraft Web can be deployed on Unraid using the Docker Compose configuration above or by configuring the container manually with:
-
-- **Repository:** `ghcr.io/mikapst/lightcraft-web:latest`
+- **Unraid Community Applications repository:** [MikaPST/unraid-community-apps](https://github.com/MikaPST/unraid-community-apps)
+- **LightCraft Web template:** [lightcraft-web.xml](https://github.com/MikaPST/unraid-community-apps/blob/main/templates/lightcraft-web.xml)
+- **Docker image:** `ghcr.io/mikapst/lightcraft-web:latest`
 - **Container port:** `8080`
-- **Host port:** `8080` by default
 
-Remember that the photo library is stored in each user's browser storage, not in the Unraid appdata directory. Removing browser data or changing browser profiles can make that library unavailable. Use the application's backup and restore functionality.
+The Unraid template is maintained independently of this packaging repository. As with Docker Compose, the photo library is stored in each user's browser, not in Unraid `appdata`. Use LightCraft's library backup and restore functions and retain copies of original photos.
 
-## Upstream project and attribution
+## Upstream project
 
 - **LightCraft source code:** [storytold/lightcraft](https://github.com/storytold/lightcraft)
 - **LightCraft web build and hosting instructions:** [docs/web.md](https://github.com/storytold/lightcraft/blob/main/docs/web.md)
 - **Shared font assets:** [storytold/craft-fonts](https://github.com/storytold/craft-fonts)
 - **Official releases:** [LightCraft releases](https://github.com/storytold/lightcraft/releases)
+
+This repository builds the official LightCraft browser application from the selected upstream release tag, while keeping its Docker packaging independent. A MikaPST GitHub Release identifies a community-packaged image, not an official upstream distribution.
+
+## License and attribution
 
 LightCraft is open source and is dual-licensed under the MIT License or Apache License 2.0, at the user's option, as specified by the upstream project. The `craft-fonts` assets have their own licensing and attribution requirements; consult that repository for the applicable notices.
 
